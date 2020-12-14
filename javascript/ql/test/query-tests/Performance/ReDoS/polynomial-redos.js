@@ -67,4 +67,13 @@ app.use(function(req, res) {
 	(/[^Y].*X/.test(tainted)); // NOT OK
 	(/[^Y].*$/.test(req.url)); // OK - the input cannot contain newlines.
 	(/[^Y].*$/.test(req.body)); // NOT OK
+
+	tainted.match(/^([^-]+)-([A-Za-z0-9+/]+(?:=?=?))([?\x21-\x7E]*)$/); // NOT OK - but not detected
+
+	tainted.match(new RegExp("(MSIE) (\\d+)\\.(\\d+).*XBLWP7")); // NOT OK - but not detected
+
+	tainted.match(/<.*class="([^"]+)".*>/); // NOT OK
+
+	tainted.match(/Y.*X/); // NOT OK
+	tatined.match(/B?(YH|K)(YH|J)*X/); // NOT OK - but not detected
 });
