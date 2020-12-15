@@ -5,6 +5,7 @@
 
 import javascript
 
+// TODO: Make stuff private, and rebase that into the refactor commit. TODO: Rename this to ReDoSUtilities
 /**
  * A configuration for which parts of a regular expression should be considered relevant for
  * the different predicates in `ReDoS.qll`.
@@ -28,8 +29,26 @@ abstract class ReDoSConfiguration extends string {
   abstract predicate isRelevant(RegExpTerm term);
 }
 
+/**
+ * Holds if repeating `pump' starting at `state` is a candidate for causing backtracking.
+ * No check whether a rejected suffix exists has been made.
+ */
 private predicate isReDoSCandidate(State state, string pump) {
-  any(ReDoSConfiguration conf).isReDoSCandidate(state, pump)
+  any(ReDoSConfiguration conf).isReDoSCandidate(state, pump) and
+  (
+    not any(ReDoSConfiguration conf).isReDoSCandidate(epsilonSucc+(state), _)
+    or
+    epsilonSucc+(state) = state and
+    state =
+      max(State s, Location l |
+        s = epsilonSucc+(state) and
+        l = s.getRepr().getLocation() and
+        any(ReDoSConfiguration conf).isReDoSCandidate(s, _) and
+        s.getRepr() instanceof InfiniteRepetitionQuantifier
+      |
+        s order by l.getStartLine(), l.getStartColumn(), l.getEndColumn(), l.getEndLine()
+      )
+  )
 }
 
 /**
@@ -203,7 +222,7 @@ abstract class CharacterClass extends InputSymbol {
 /**
  * Provides implementations for `CharacterClass`.
  */
-private module CharacterClasses {
+module CharacterClasses {
   /**
    * Holds if the character class `cc` has a child (constant or range) that matches `char`.
    */
@@ -506,6 +525,8 @@ predicate delta(State q1, EdgeLabel lbl, State q2) {
     or
     lbl = Epsilon() and q2 = Accept(root)
   )
+  or
+  exists(RegExpRoot root | q1 = Match(root, 0) | lbl = Any() and q2 = q1)
   or
   exists(RegExpDollar dollar | q1 = before(dollar) |
     lbl = Epsilon() and q2 = Accept(getRoot(dollar))
@@ -850,4 +871,58 @@ module SuffixConstruction {
       deltaClosed(prev, getAnInputSymbolMatching(w.charAt(i)), result)
     )
   }
+}
+
+/**
+ * Gets the result of backslash-escaping newlines, carriage-returns and
+ * backslashes in `s`.
+ */
+bindingset[s]
+string escape(string s) {
+  result =
+    s.replaceAll("\\", "\\\\")
+        .replaceAll("\n", "\\n")
+        .replaceAll("\r", "\\r")
+        .replaceAll("\t", "\\t")
+}
+
+/**
+ * Gets `str` with the last `i` characters moved to the front.
+ *
+ * We use this to adjust the pump string to match with the beginning of
+ * a RegExpTerm, so it doesn't start in the middle of a constant.
+ */
+bindingset[str, i]
+string rotate(string str, int i) {
+  result = str.suffix(str.length() - i) + str.prefix(str.length() - i)
+}
+
+/**
+ * Holds if `term` may cause superliniear backtracking on strings containing many repetitions of `pump`.
+ * Gets the minimum possible string that causes superliniear backtracking.
+ */
+predicate isReDoSAttackable(RegExpTerm term, string pump, State s) {
+  exists(int i, string c | s = Match(term, i) |
+    c =
+      min(string w |
+        any(ReDoSConfiguration conf).isReDoSCandidate(s, w) and
+        SuffixConstruction::reachesOnlyRejectableSuffixes(s, w)
+      |
+        w order by w.length(), w
+      ) and
+    pump = escape(rotate(c, i))
+  )
+}
+
+predicate hasReDoSResult(RegExpTerm t, string pump, State s, string prefixMsg) {
+  // TODO:
+  isReDoSAttackable(t, pump, s) and
+  (
+    prefixMsg = "starting with '" + escape(PrefixConstruction::prefix(s)) + "' and " and
+    not PrefixConstruction::prefix(s) = ""
+    or
+    PrefixConstruction::prefix(s) = "" and prefixMsg = ""
+    or
+    not exists(PrefixConstruction::prefix(s)) and prefixMsg = ""
+  )
 }

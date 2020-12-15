@@ -292,92 +292,18 @@ predicate isPumpable(State fork, string w) {
 }
 
 /**
- * Holds if `term` may cause exponential backtracking on strings containing many repetitions of `pump`.
- * Gets the minimum possible string that causes exponential backtracking.
- */
-predicate isReDoSAttackable(RegExpTerm term, string pump, State s) {
-  exists(int i, string c | s = Match(term, i) |
-    c =
-      min(string w |
-        isExponentialReDoSCandidate(s, w) and
-        SuffixConstruction::reachesOnlyRejectableSuffixes(s, w)
-      |
-        w order by w.length(), w
-      ) and
-    pump = escape(rotate(c, i))
-  )
-}
-
-/**
- * Holds if repeating `pump' starting at `state` is a candidate for causing exponential backtracking.
- * No check whether a rejected suffix exists has been made.
- */
-predicate isExponentialReDoSCandidate(State state, string pump) {
-  isPumpable(state, pump) and
-  (
-    not isPumpable(epsilonSucc+(state), _)
-    or
-    epsilonSucc+(state) = state and
-    state =
-      max(State s, Location l |
-        s = epsilonSucc+(state) and
-        l = s.getRepr().getLocation() and
-        isPumpable(s, _) and
-        s.getRepr() instanceof InfiniteRepetitionQuantifier
-      |
-        s order by l.getStartLine(), l.getStartColumn(), l.getEndColumn(), l.getEndLine()
-      )
-  )
-}
-
-/**
  * An instantiation of `ReDoSConfiguration` for exponential backtracking.
  */
 class ExponentialReDoSConfiguration extends ReDoSConfiguration {
   ExponentialReDoSConfiguration() { this = "ExponentialReDoSConfiguration" }
 
-  override predicate isReDoSCandidate(State state, string pump) {
-    isExponentialReDoSCandidate(state, pump)
-  }
+  override predicate isReDoSCandidate(State state, string pump) { isPumpable(state, pump) }
 
   override predicate isRelevant(RegExpTerm term) { term instanceof MaybeBacktrackingRepetition }
 }
 
-/**
- * Gets the result of backslash-escaping newlines, carriage-returns and
- * backslashes in `s`.
- */
-bindingset[s]
-string escape(string s) {
-  result =
-    s.replaceAll("\\", "\\\\")
-        .replaceAll("\n", "\\n")
-        .replaceAll("\r", "\\r")
-        .replaceAll("\t", "\\t")
-}
-
-/**
- * Gets `str` with the last `i` characters moved to the front.
- *
- * We use this to adjust the pump string to match with the beginning of
- * a RegExpTerm, so it doesn't start in the middle of a constant.
- */
-bindingset[str, i]
-string rotate(string str, int i) {
-  result = str.suffix(str.length() - i) + str.prefix(str.length() - i)
-}
-
 from RegExpTerm t, string pump, State s, string prefixMsg
-where
-  isReDoSAttackable(t, pump, s) and
-  (
-    prefixMsg = "starting with '" + escape(PrefixConstruction::prefix(s)) + "' and " and
-    not PrefixConstruction::prefix(s) = ""
-    or
-    PrefixConstruction::prefix(s) = "" and prefixMsg = ""
-    or
-    not exists(PrefixConstruction::prefix(s)) and prefixMsg = ""
-  )
+where hasReDoSResult(t, pump, s, prefixMsg)
 select t,
   "This part of the regular expression may cause exponential backtracking on strings " + prefixMsg +
     "containing many repetitions of '" + pump + "'."
