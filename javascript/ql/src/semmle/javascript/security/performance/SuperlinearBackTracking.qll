@@ -45,104 +45,17 @@ class SuperLiniearReDoSConfiguration extends ReDoSConfiguration {
     superLiniearReDoSCandidate(state, pump)
   }
 
-  override predicate isRelevant(RegExpTerm term) { any() } // TODO:
+  override predicate isRelevant(RegExpTerm term) {
+    term.getSuccessor*() instanceof InfiniteRepetitionQuantifier
+    or
+    term.getParent*() instanceof InfiniteRepetitionQuantifier
+  }
 }
 
 /**
  * Gets any root (start) state of a regular expression.
  */
 private State getRootState() { result = Match(any(RegExpRoot r), 0) }
-
-module CanStartAnywhereNotUsedToDelete {
-  /**
-   * Holds if `s` is an infinite repetition that can start matching anywhere in the regular expression.
-   * This causes quadratic runtime if there exists a rejecting suffix.
-   */
-  predicate canStartMatchingAnywhere(State s, string pump) {
-    s.getRepr() instanceof InfiniteRepetitionQuantifier and
-    epsilonSucc+(getRootState()) = s and
-    pump = repetitionString(s.getRepr())
-  }
-
-  /**
-   * Holds if `s` is the start state inside an infinite repeition.
-   */
-  private predicate isStartOfRepetition(State s) {
-    s.getRepr() = any(InfiniteRepetitionQuantifier r).getChild(0)
-  }
-
-  /**
-   * Holds if there exists a transition in the NFA from `a` to `b`.
-   */
-  private predicate delta(State a, State b) { delta(a, _, b) }
-
-  /**
-   * Gets the minimum length of a path from `q` to `r`,
-   */
-  private int distFromRepetitionStart(State q, State r) =
-    shortestDistances(isStartOfRepetition/1, delta/2)(q, r, result)
-
-  /**
-   * Gets the shortest distance in the NFA from the beginning of the repetition `quantifier` to `s`.
-   */
-  private int distToQuantifier(InfiniteRepetitionQuantifier quantifier, State s) {
-    exists(int loopLength |
-      loopLength = distFromRepetitionStart(Match(quantifier.getChild(0), 0), Match(quantifier, 0)) and
-      result = loopLength - distFromRepetitionStart(Match(quantifier.getChild(0), 0), s)
-    ) and
-    result >= 0
-  }
-
-  /**
-   * Holds if the shortest distance from the beginning of `quantifier` to `s` is `dist`,
-   * and `str` matches the regular expression from the beginning of `quantifier` to `s`.
-   * Is used to construct a string matching the inside of a repetition one step at a time.
-   */
-  private predicate repetitionString(
-    InfiniteRepetitionQuantifier quantifier, State s, int dist, string str
-  ) {
-    // base case
-    s.getRepr() = quantifier.getChild(0) and
-    str = "" and
-    dist = distToQuantifier(quantifier, s)
-    or
-    // recursive case
-    exists(string prevStr, State prev |
-      prev =
-        // Select a previous by an arbibary measure
-        min(State prevCan, Location loc |
-          delta(prevCan, _, s) and
-          distToQuantifier(quantifier, prevCan) - 1 = dist and
-          dist = distToQuantifier(quantifier, s) and
-          loc = prevCan.getRepr().getLocation()
-        |
-          prevCan
-          order by
-            loc.getStartLine(), loc.getStartColumn(), loc.getEndLine(), loc.getEndColumn()
-        ) and
-      repetitionString(quantifier, prev, dist + 1, prevStr) and
-      (
-        delta(prev, Epsilon(), s) and str = prevStr
-        or
-        exists(string char |
-          char =
-            min(string c |
-              c = CharacterClasses::getARelevantChar() and
-              delta(prev, getAnInputSymbolMatching(c), s)
-            ) and
-          str = prevStr + char
-        )
-      )
-    )
-  }
-
-  /**
-   * Gets a string that matches the inner regular expression of the repeition `quantifier`.
-   */
-  private string repetitionString(InfiniteRepetitionQuantifier quantifier) {
-    repetitionString(quantifier, Match(quantifier, 0), 0, result)
-  }
-}
 
 import OverlapsWithPrev // TODO:
 
@@ -197,14 +110,14 @@ module OverlapsWithPrev {
    * Holds if `prev` and `next` are a pair of states that could be the beginning of a quadratic blowup.
    * TODO: Make bigger explanation in top of module. Paper: https://arxiv.org/pdf/1701.04045.pdf
    * Mention how the "start anywhere" is modeled by just having an any-transition from the start state to itself.
-   * TODO: Consider detecting loops using the NFA.
+   * TODO: Consider detecting loops using the NFA. (in any case simplfy)
    */
   predicate isStartPair(State prev, State next) {
     prev != next and
     next.getRepr() instanceof InfiniteRepetitionQuantifier and
     getADeltaReachable*(prev) = next and
     (
-      prev.getRepr() = any(InfiniteRepetitionQuantifier i).getChild(0)
+      prev.getRepr() = any(InfiniteRepetitionQuantifier i)
       or
       epsilonSucc*(getRootState()) = prev
       or
@@ -253,7 +166,7 @@ module OverlapsWithPrev {
       // use noopt to force the join on `intersect` to happen last.
       exists(intersect(s1, s2))
     ) //and
-    //stateInsideBacktracking(r1) and
+    //stateInsideBacktracking(r1) and // TODO:
     //stateInsideBacktracking(r2)
   }
 
@@ -327,7 +240,9 @@ module OverlapsWithPrev {
   /**
    * Gets a state that can be reached from start `s` consuming all
    * chars in `w` any number of times followed by the first `i+1` characters of `w`.
-   * TODO: Pumps the prev to get pi_1
+   * TODO doc: Pumps the prev to get pi_1
+   * // TODO: Consider re-introducing until-fixpoint. But find some way of improving the search.
+   * This is the BY far most expensive part.
    */
   private State processPrev(State s, string w, int i) {
     isPumpableCandidate(s, _, w) and
@@ -354,6 +269,7 @@ module OverlapsWithPrev {
 
   predicate isPumpable(State prev, State next, string w) {
     isPumpableCandidate(prev, next, w) and
+    // TODO: Make a "loopsBackOnItself" predicate, that has special handling for the Root - and possibly some deduplication of pump strings (pump strings that are repeated twice are not needed.)
     epsilonSucc*(processPrev(prev, w, w.length() - 1)) = prev
   }
 }
