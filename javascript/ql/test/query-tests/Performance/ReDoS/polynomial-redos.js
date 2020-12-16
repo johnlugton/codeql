@@ -40,7 +40,7 @@ app.use(function(req, res) {
 	tainted.match(/^([^-]+)-([A-Za-z0-9+/]+(?:=?=?))([?\x21-\x7E]*)$/); // NOT OK
 	tainted.match(/^([^-]+)-([A-Za-z0-9+/=]{44,88})(\?[\x21-\x7E]*)*$/); // NOT OK (it is a fix for the above, but it introduces exponential complexity elsewhere)
 
-	tainted.match(/^([a-z0-9-]+)[ \t]+([a-zA-Z0-9+\/]+[=]*)([\n \t]+([^\n]+))?$/); // NOT OK - but not flagged due to lack of support for inverted character classes
+	tainted.match(/^([a-z0-9-]+)[ \t]+([a-zA-Z0-9+\/]+[=]*)([\n \t]+([^\n]+))?$/); // NOT OK
 	tainted.match(/^([a-z0-9-]+)[ \t]+([a-zA-Z0-9+\/]+[=]*)([ \t]+([^ \t][^\n]*[\n]*)?)?$/); // OK
 
 	tainted.match(/^(?:\.?[a-zA-Z_][a-zA-Z_0-9]*)+$/); // NOT OK (also flagged by js/redos)

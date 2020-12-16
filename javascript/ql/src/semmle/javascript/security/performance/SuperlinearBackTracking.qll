@@ -61,6 +61,7 @@ import OverlapsWithPrev // TODO:
 
 module OverlapsWithPrev {
   /**
+   * TODO: Descrip is old.
    * A state in the product automaton.
    *
    * We lazily only construct those states that we are actually
@@ -73,36 +74,42 @@ module OverlapsWithPrev {
    * States are only constructed if both states in the pair are
    * inside a repetition that might backtrack.
    */
-  newtype TStatePair =
-    MkStatePair(State q1, State q2) {
-      isFork(q1, q2, _, _, _, _)
+  newtype TStateTuple =
+    // starts at (prev, prev, next)
+    MkStateTuple(State q1, State q2, State q3) {
+      isFork(q1, q3, _, _, _, _, _, _) and q1 = q2
       or
-      step(_, _, _, q1, q2)
+      step(_, _, _, _, q1, q2, q3)
     }
 
-  class StatePair extends TStatePair {
+  class StateTuple extends TStateTuple {
     State q1;
     State q2;
+    State q3;
 
-    StatePair() { this = MkStatePair(q1, q2) }
+    StateTuple() { this = MkStateTuple(q1, q2, q3) }
 
-    string toString() { result = "(" + q1 + ", " + q2 + ")" }
+    string toString() { result = "(" + q1 + ", " + q2 + ", " + q3 + ")" }
 
-    State getLeft() { result = q1 }
+    State getFirst() { result = q1 }
 
-    State getRight() { result = q2 }
+    State getSecond() { result = q2 }
+
+    State getThird() { result = q3 }
   }
 
-  predicate isStatePair(StatePair p) { any() }
+  pragma[noinline]
+  predicate isStateTuple(StateTuple p) { any() }
 
-  predicate delta2(StatePair q, StatePair r) { step(q, _, _, r) }
+  pragma[noinline]
+  predicate tupleDelta(StateTuple q, StateTuple r) { stepTuples(q, _, _, _, r) }
 
   /**
    * Gets the minimum length of a path from `q` to `r` in the
    * product automaton.
    */
-  int statePairDist(StatePair q, StatePair r) =
-    shortestDistances(isStatePair/1, delta2/2)(q, r, result)
+  int statePairDist(StateTuple q, StateTuple r) =
+    shortestDistances(isStateTuple/1, tupleDelta/2)(q, r, result)
 
   State getADeltaReachable(State s) { delta(s, _, result) }
 
@@ -126,20 +133,26 @@ module OverlapsWithPrev {
   }
 
   pragma[noopt]
-  predicate isFork(State prev, State next, InputSymbol s1, InputSymbol s2, State r1, State r2) {
+  predicate isFork(
+    State prev, State next, InputSymbol s1, InputSymbol s2, InputSymbol s3, State r1, State r2,
+    State r3
+  ) {
     isStartPair(prev, next) and
-    exists(State q1, State q2 |
+    exists(State q1, State q2, State q3 |
       q1 = epsilonSucc*(prev) and
       delta(q1, s1, r1) and
-      q2 = epsilonSucc*(next) and
+      q2 = epsilonSucc*(prev) and
       delta(q2, s2, r2) and
-      exists(intersect(s1, s2))
+      q3 = epsilonSucc*(next) and
+      delta(q3, s3, r3) and
+      // TODO: This is duplicated. De-duplicate? Also not perfect. Consider doing some pre-compuation in another predicate?
+      threeWayIntersect(s1, s2, s3)
     |
-      s1 != s2
+      s1 != s3
       or
-      r1 != r2
+      r1 != r3
       or
-      r1 = r2 and q1 != q2
+      r1 = r3 and q1 != q3
     )
   }
 
@@ -147,8 +160,20 @@ module OverlapsWithPrev {
    * Holds if there are transitions from the components of `q` to the corresponding
    * components of `r` labelled with `s1` and `s2`, respectively.
    */
-  predicate step(StatePair q, InputSymbol s1, InputSymbol s2, StatePair r) {
-    exists(State r1, State r2 | step(q, s1, s2, r1, r2) and r = MkStatePair(r1, r2))
+  pragma[noinline]
+  predicate stepTuples(StateTuple q, InputSymbol s1, InputSymbol s2, InputSymbol s3, StateTuple r) {
+    exists(State r1, State r2, State r3 |
+      step(q, s1, s2, s3, r1, r2, r3) and r = MkStateTuple(r1, r2, r3)
+    )
+  }
+
+  pragma[noinline]
+  predicate threeWayIntersect(InputSymbol s1, InputSymbol s2, InputSymbol s3) {
+    intersect(s1, s2) = intersect(s2, s3)
+    or
+    intersect(s1, s3) = intersect(s2, s3)
+    or
+    intersect(s1, s3) = intersect(s1, s2)
   }
 
   /**
@@ -159,26 +184,46 @@ module OverlapsWithPrev {
    * inside a repetition that might backtrack.
    */
   pragma[noopt]
-  predicate step(StatePair q, InputSymbol s1, InputSymbol s2, State r1, State r2) {
-    exists(State q1, State q2 | q.getLeft() = q1 and q.getRight() = q2 |
+  predicate step(
+    StateTuple q, InputSymbol s1, InputSymbol s2, InputSymbol s3, State r1, State r2, State r3
+  ) {
+    exists(State q1, State q2, State q3 |
+      q.getFirst() = q1 and q.getSecond() = q2 and q.getThird() = q3
+    |
       deltaClosed(q1, s1, r1) and
       deltaClosed(q2, s2, r2) and
+      deltaClosed(q3, s3, r3) and
       // use noopt to force the join on `intersect` to happen last.
-      exists(intersect(s1, s2))
-    ) //and
+      // TODO: Try others. Have some noinline predicate that computes 3-way intersect.
+      threeWayIntersect(s1, s2, s3)
+    ) and //and
+    isRepeitionOrRoot(r1) and
+    stateInsideRepetition(r3) and
+    getADeltaReachable+(r1) = r2 and
+    getADeltaReachable+(r2) = r3
     //stateInsideBacktracking(r1) and // TODO:
     //stateInsideBacktracking(r2)
   }
 
+  /**
+   * Holds if state `s` might be inside a backtracking repetition.
+   */
+  pragma[noinline]
+  predicate stateInsideRepetition(State s) {
+    s.getRepr().getParent*() instanceof InfiniteRepetitionQuantifier
+  }
+
+  predicate isRepeitionOrRoot(State s) { stateInsideRepetition(s) or s = getRootState() }
+
   private newtype TTrace =
     Nil() or
-    Step(InputSymbol s1, InputSymbol s2, TTrace t) {
-      exists(StatePair p |
+    Step(InputSymbol s1, InputSymbol s2, InputSymbol s3, TTrace t) {
+      exists(StateTuple p |
         isReachableFromFork(_, _, p, t, _) and
-        step(p, s1, s2, _)
+        stepTuples(p, s1, s2, s3, _)
       )
       or
-      t = Nil() and isFork(_, _, s1, s2, _, _)
+      t = Nil() and isFork(_, _, s1, s2, s3, _, _, _)
     }
 
   /**
@@ -189,8 +234,8 @@ module OverlapsWithPrev {
     string toString() {
       this = Nil() and result = "Nil()"
       or
-      exists(InputSymbol s1, InputSymbol s2, Trace t | this = Step(s1, s2, t) |
-        result = "Step(" + s1 + ", " + s2 + ", " + t + ")"
+      exists(InputSymbol s1, InputSymbol s2, InputSymbol s3, Trace t | this = Step(s1, s2, s3, t) |
+        result = "Step(" + s1 + ", " + s2 + ", " + s3 + ", " + t + ")"
       )
     }
   }
@@ -201,8 +246,17 @@ module OverlapsWithPrev {
   string concretise(Trace t) {
     t = Nil() and result = ""
     or
-    exists(InputSymbol s1, InputSymbol s2, Trace rest | t = Step(s1, s2, rest) |
-      result = concretise(rest) + intersect(s1, s2)
+    exists(InputSymbol s1, InputSymbol s2, InputSymbol s3, Trace rest | t = Step(s1, s2, s3, rest) |
+      exists(string char |
+        // TODO: Make into noinline predicate
+        char = intersect(s1, s2) and char = intersect(s2, s3)
+        or
+        char = intersect(s1, s3) and char = intersect(s2, s3)
+        or
+        char = intersect(s1, s3) and char = intersect(s1, s2)
+      |
+        result = concretise(rest) + char
+      )
     )
   }
 
@@ -210,67 +264,39 @@ module OverlapsWithPrev {
    * Holds if `r` is reachable from `(fork, fork)` under input `w`, and there is
    * a path from `r` back to `(fork, fork)` with `rem` steps.
    */
-  predicate isReachableFromFork(State prev, State next, StatePair r, Trace w, int rem) {
+  predicate isReachableFromFork(State prev, State next, StateTuple r, Trace w, int rem) {
     // base case
-    exists(InputSymbol s1, InputSymbol s2, State q1, State q2 |
-      isFork(prev, next, s1, s2, q1, q2) and
-      r = MkStatePair(q1, q2) and
-      w = Step(s1, s2, Nil()) and
-      rem = statePairDist(r, MkStatePair(next, next))
+    exists(InputSymbol s1, InputSymbol s2, InputSymbol s3, State q1, State q2, State q3 |
+      isFork(prev, next, s1, s2, s3, q1, q2, q3) and
+      r = MkStateTuple(q1, q2, q3) and
+      w = Step(s1, s2, s3, Nil()) and
+      rem = statePairDist(r, MkStateTuple(prev, next, next))
     )
     or
     // recursive case
-    exists(StatePair p, Trace v, InputSymbol s1, InputSymbol s2 |
+    exists(StateTuple p, Trace v, InputSymbol s1, InputSymbol s2, InputSymbol s3 |
       isReachableFromFork(prev, next, p, v, rem + 1) and
-      step(p, s1, s2, r) and
-      w = Step(s1, s2, v) and
-      rem >= statePairDist(r, MkStatePair(next, next))
+      stepTuples(p, s1, s2, s3, r) and
+      w = Step(s1, s2, s3, v) and
+      rem >= statePairDist(r, MkStateTuple(prev, next, next))
     )
   }
 
   /**
-   * Gets a state in the product automaton from which `(fork, fork)` is
+   * Gets a state in the product automaton from which `(prev, next, next)` is
    * reachable in zero or more epsilon transitions.
    */
-  StatePair getAForkPair(State prev, State next) {
+  StateTuple getAForkPair(State prev, State next) {
     isStartPair(prev, next) and
-    result = MkStatePair(epsilonPred*(next), epsilonPred*(next))
+    result = MkStateTuple(epsilonPred*(prev), epsilonPred*(next), epsilonPred*(next))
   }
 
-  /**
-   * Gets a state that can be reached from start `s` consuming all
-   * chars in `w` any number of times followed by the first `i+1` characters of `w`.
-   * TODO doc: Pumps the prev to get pi_1
-   * // TODO: Consider re-introducing until-fixpoint. But find some way of improving the search.
-   * This is the BY far most expensive part.
-   */
-  private State processPrev(State s, string w, int i) {
-    isPumpableCandidate(s, _, w) and
-    exists(State prev |
-      i = 0 and prev = s
-      or
-      prev = processPrev(s, w, i - 1)
-      or
-      // repeat until fixpoint
-      i = 0 and
-      prev = processPrev(s, w, w.length() - 1)
-    |
-      deltaClosed(prev, getAnInputSymbolMatching(w.charAt(i)), result)
-    )
-  }
-
-  predicate isPumpableCandidate(State prev, State next, string w) {
-    exists(StatePair q, Trace t |
+  predicate isPumpable(State prev, State next, string w) {
+    exists(StateTuple q, Trace t |
       isReachableFromFork(prev, next, q, t, _) and
       q = getAForkPair(prev, next) and
       w = concretise(t)
     )
-  }
-
-  predicate isPumpable(State prev, State next, string w) {
-    isPumpableCandidate(prev, next, w) and
-    // TODO: Make a "loopsBackOnItself" predicate, that has special handling for the Root - and possibly some deduplication of pump strings (pump strings that are repeated twice are not needed.)
-    epsilonSucc*(processPrev(prev, w, w.length() - 1)) = prev
   }
 }
 
