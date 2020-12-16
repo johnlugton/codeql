@@ -60,6 +60,7 @@ private State getRootState() { result = Match(any(RegExpRoot r), 0) }
 import OverlapsWithPrev // TODO:
 
 module OverlapsWithPrev {
+  // TODO: I only got 1 module, so just move to top-level.
   /**
    * TODO: Descrip is old.
    * A state in the product automaton.
@@ -99,17 +100,32 @@ module OverlapsWithPrev {
   }
 
   pragma[noinline]
-  predicate isStateTuple(StateTuple p) { any() }
+  predicate isStateTuple(StateTuple p) {
+    // TODO: Rename - reorginaize - and document the two-phase system.
+    // Quick and dirty check that the goal might be reachable.
+    tupleDeltaTmp*(p) = getAForkPair(_, _)
+  }
+
+  StateTuple tupleDeltaTmp(StateTuple s) { tupleDelta(s, result) }
 
   pragma[noinline]
   predicate tupleDelta(StateTuple q, StateTuple r) { stepTuples(q, _, _, _, r) }
+
+  pragma[noinline]
+  predicate tupleDelta2(StateTuple q, StateTuple r) {
+    tupleDelta(q, r) and
+    isStateTuple(q) and
+    isStateTuple(r)
+  }
 
   /**
    * Gets the minimum length of a path from `q` to `r` in the
    * product automaton.
    */
   int statePairDist(StateTuple q, StateTuple r) =
-    shortestDistances(isStateTuple/1, tupleDelta/2)(q, r, result)
+    shortestDistances(isStateTuple/1,
+      // TODO: Name.
+      tupleDelta2/2)(q, r, result)
 
   State getADeltaReachable(State s) { delta(s, _, result) }
 
@@ -196,14 +212,27 @@ module OverlapsWithPrev {
       // use noopt to force the join on `intersect` to happen last.
       // TODO: Try others. Have some noinline predicate that computes 3-way intersect.
       threeWayIntersect(s1, s2, s3)
-    ) and //and
+    ) and
+    // Lots of pruning, to only step to relevant states.
     isRepeitionOrRoot(r1) and
     stateInsideRepetition(r3) and
     getADeltaReachable+(r1) = r2 and
-    getADeltaReachable+(r2) = r3
+    getADeltaReachable+(r2) = r3 and
+    canReachATarget(r3) and
+    canReachABeginning(r1)
     //stateInsideBacktracking(r1) and // TODO:
     //stateInsideBacktracking(r2)
   }
+
+  pragma[noinline]
+  predicate canReachABeginning(State s) { getADeltaReachable+(s) = getABeginning() }
+
+  pragma[noinline]
+  predicate canReachATarget(State s) { getADeltaReachable+(s) = getATarget() }
+
+  State getATarget() { isStartPair(_, result) }
+
+  State getABeginning() { isStartPair(result, _) }
 
   /**
    * Holds if state `s` might be inside a backtracking repetition.
