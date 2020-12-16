@@ -75,6 +75,9 @@ module OverlapsWithPrev {
    * States are only constructed if both states in the pair are
    * inside a repetition that might backtrack.
    */
+  // The exponential variant has a q1 <= q2 <= q3 variant.
+  // I can't do that here, because position is important (for optimization).
+  // The states are not created equals.
   newtype TStateTuple =
     // starts at (prev, prev, next)
     MkStateTuple(State q1, State q2, State q3) {
@@ -103,7 +106,10 @@ module OverlapsWithPrev {
   predicate isStateTuple(StateTuple p) {
     // TODO: Rename - reorginaize - and document the two-phase system.
     // Quick and dirty check that the goal might be reachable.
-    tupleDeltaTmp*(p) = getAForkPair(_, _)
+    exists(StateTuple start, State prev, State next | isFork(prev, next, _, _, _, _, _, _) |
+      tupleDeltaTmp*(start) = p and
+      tupleDeltaTmp*(p) = getAForkPair(prev, next)
+    )
   }
 
   StateTuple tupleDeltaTmp(StateTuple s) { tupleDelta(s, result) }
@@ -213,8 +219,8 @@ module OverlapsWithPrev {
       // TODO: Try others. Have some noinline predicate that computes 3-way intersect.
       threeWayIntersect(s1, s2, s3)
     ) and
-    // Lots of pruning, to only step to relevant states.
-    isRepeitionOrRoot(r1) and
+    // Lots of pruning, to only consider relevant states.
+    isRepeitionOrRoot(r1) and // TODO: Try to move this into step?
     stateInsideRepetition(r3) and
     getADeltaReachable+(r1) = r2 and
     getADeltaReachable+(r2) = r3 and
@@ -316,6 +322,7 @@ module OverlapsWithPrev {
    * reachable in zero or more epsilon transitions.
    */
   StateTuple getAForkPair(State prev, State next) {
+    // TODO: Name - end-tuple.
     isStartPair(prev, next) and
     result = MkStateTuple(epsilonPred*(prev), epsilonPred*(next), epsilonPred*(next))
   }
