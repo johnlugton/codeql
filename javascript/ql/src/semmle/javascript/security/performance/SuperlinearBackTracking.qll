@@ -118,20 +118,30 @@ module OverlapsWithPrev {
   predicate tupleDelta(StateTuple q, StateTuple r) { stepTuples(q, _, _, _, r) }
 
   pragma[noinline]
-  predicate tupleDelta2(StateTuple q, StateTuple r) {
-    tupleDelta(q, r) and
+  predicate tupleDeltaBackwards(StateTuple q, StateTuple r) {
+    tupleDelta(r, q) and
     isStateTuple(q) and
     isStateTuple(r)
+  }
+
+  predicate isEndState(StateTuple tuple) {
+    exists(State prev, State next |
+      isStartPair(prev, next) and
+      tuple = MkStateTuple(prev, next, next)
+    )
   }
 
   /**
    * Gets the minimum length of a path from `q` to `r` in the
    * product automaton.
+   * DOC: Searches backwards form the end-state. Because it is way more efficient to have the first argument to `shortestDistances` be small.
+   * (The default behavior would be to just have shortest distance to/from all StateTuples)
+   * This allowed the PolynomialReDoS query to run more than twice as fast on our test-suite.
    */
-  int statePairDist(StateTuple q, StateTuple r) =
-    shortestDistances(isStateTuple/1,
+  int distBackFromEnd(StateTuple end, StateTuple r) =
+    shortestDistances(isEndState/1,
       // TODO: Name.
-      tupleDelta2/2)(q, r, result)
+      tupleDeltaBackwards/2)(end, r, result)
 
   State getADeltaReachable(State s) { delta(s, _, result) }
 
@@ -191,6 +201,7 @@ module OverlapsWithPrev {
 
   pragma[noinline]
   predicate threeWayIntersect(InputSymbol s1, InputSymbol s2, InputSymbol s3) {
+    // TODO: Is symmetric - do the intersect once, and then do an "or threewayIntersect(s3, s2, s1)"
     intersect(s1, s2) = intersect(s2, s3)
     or
     intersect(s1, s3) = intersect(s2, s3)
@@ -297,7 +308,7 @@ module OverlapsWithPrev {
 
   /**
    * Holds if `r` is reachable from `(fork, fork)` under input `w`, and there is
-   * a path from `r` back to `(fork, fork)` with `rem` steps.
+   * a path from `r` back to `(fork, fork)` with `rem` steps. <- TODO: Doc is outdated!
    */
   predicate isReachableFromFork(State prev, State next, StateTuple r, Trace w, int rem) {
     // base case
@@ -305,16 +316,26 @@ module OverlapsWithPrev {
       isFork(prev, next, s1, s2, s3, q1, q2, q3) and
       r = MkStateTuple(q1, q2, q3) and
       w = Step(s1, s2, s3, Nil()) and
-      rem = statePairDist(r, MkStateTuple(prev, next, next))
+      rem = distBackFromEnd(MkStateTuple(prev, next, next), r)
     )
     or
     // recursive case
-    exists(StateTuple p, Trace v, InputSymbol s1, InputSymbol s2, InputSymbol s3 |
-      isReachableFromFork(prev, next, p, v, rem + 1) and
-      stepTuples(p, s1, s2, s3, r) and
-      w = Step(s1, s2, s3, v) and
-      rem >= statePairDist(r, MkStateTuple(prev, next, next))
+    exists(StateTuple p, Trace v, InputSymbol s1, InputSymbol s2, InputSymbol s3, int prevRem |
+      isReachableFromFork(prev, next, p, v, prevRem) and
+      prevRem - 1 = rem and
+      rem = myDistPredicate(prev, next, r, p, s1, s2, s3) and
+      w = Step(s1, s2, s3, v)
     )
+  }
+
+  // Cannot be inlined.
+  pragma[noinline]
+  int myDistPredicate(
+    State prev, State next, StateTuple r, StateTuple p, InputSymbol s1, InputSymbol s2,
+    InputSymbol s3
+  ) {
+    result = distBackFromEnd(MkStateTuple(prev, next, next), r) and
+    stepTuples(p, s1, s2, s3, r)
   }
 
   /**
