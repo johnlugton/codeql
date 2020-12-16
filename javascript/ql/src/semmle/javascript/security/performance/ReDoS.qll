@@ -5,6 +5,10 @@
 
 import javascript
 
+/*
+ * TODO: Document here how to use this module.
+ */
+
 // TODO: Make stuff private, and rebase that into the refactor commit. TODO: Rename this to ReDoSUtilities
 /**
  * A configuration for which parts of a regular expression should be considered relevant for
