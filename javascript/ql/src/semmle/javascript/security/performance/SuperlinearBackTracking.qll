@@ -201,12 +201,7 @@ module OverlapsWithPrev {
 
   pragma[noinline]
   predicate threeWayIntersect(InputSymbol s1, InputSymbol s2, InputSymbol s3) {
-    // TODO: Is symmetric - do the intersect once, and then do an "or threewayIntersect(s3, s2, s1)"
-    intersect(s1, s2) = intersect(s2, s3)
-    or
-    intersect(s1, s3) = intersect(s2, s3)
-    or
-    intersect(s1, s3) = intersect(s1, s2)
+    exists(getAnIntersectedChar(s1, s2, s3)) // TODO: Consider inlining this thing
   }
 
   /**
@@ -293,17 +288,25 @@ module OverlapsWithPrev {
     t = Nil() and result = ""
     or
     exists(InputSymbol s1, InputSymbol s2, InputSymbol s3, Trace rest | t = Step(s1, s2, s3, rest) |
-      exists(string char |
-        // TODO: Make into noinline predicate
-        char = intersect(s1, s2) and char = intersect(s2, s3)
-        or
-        char = intersect(s1, s3) and char = intersect(s2, s3)
-        or
-        char = intersect(s1, s3) and char = intersect(s1, s2)
-      |
-        result = concretise(rest) + char
-      )
+      result = concretise(rest) + getAnIntersectedChar(s1, s2, s3)
     )
+  }
+
+  pragma[noinline]
+  InputSymbol getAMatchingInputSymbol(string char) {
+    result = getAnInputSymbolMatching(char) and
+    char = CharacterClasses::getARelevantChar()
+  }
+
+  // TODO: Rename to threewayIntersect. Document that it is not perfect.
+  pragma[noinline]
+  string getAnIntersectedChar(InputSymbol s1, InputSymbol s2, InputSymbol s3) {
+    // TODO: Try to do a first-phase, where I just check existence of intersections.
+    result = intersect(s1, s2) and result = intersect(s2, s3)
+    or
+    result = intersect(s1, s3) and result = intersect(s2, s3)
+    or
+    result = intersect(s1, s2) and result = intersect(s1, s3)
   }
 
   /**
