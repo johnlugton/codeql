@@ -1,15 +1,24 @@
 /**
  * Provides classes for working with regular expressions that can
  * perform backtracking in superlinear/exponential time.
+ *
+ * This module contains a number of utility predicates that needs to be configured using a `ReDoSConfiguration`.
+ * The `ReDoSConfiguration` contains predicate that are used to determine the relevant states to search in.
+ * There is only meant to exist one `ReDoSConfiguration` at a time.
+ *
+ * For implementing a new analysis using these utility predicates:
+ * First create a `ReDoSConfiguration` where the `isRelevant` predicate terms that are relevant for the search (e.g. repetitions).
+ *
+ * Next: use the utility predicates in the module (such as `delta` and `intersect`) to find
+ * a set of states that will cause backtracking if a rejecting suffix exists.
+ * Put these states into the `isReDoSCandidate` predicate of the configuration.
+ *
+ * The utility predicate `hasReDoSResult` will then output a de-duplicated set of
+ * states that will cause backtracking (a rejecting suffix exists).
  */
 
 import javascript
 
-/*
- * TODO: Document here how to use this module.
- */
-
-// TODO: Make stuff private, and rebase that into the refactor commit. TODO: Rename this to ReDoSUtilities
 /**
  * A configuration for which parts of a regular expression should be considered relevant for
  * the different predicates in `ReDoS.qll`.
@@ -71,13 +80,13 @@ class InfiniteRepetitionQuantifier extends RegExpQuantifier {
 /**
  * Gets the char after `c` (from a simplified ASCII table).
  */
-string nextChar(string c) { exists(int code | code = ascii(c) | code + 1 = ascii(result)) }
+private string nextChar(string c) { exists(int code | code = ascii(c) | code + 1 = ascii(result)) }
 
 /**
  * Gets an approximation for the ASCII code for `char`.
  * Only the easily printable chars are included (so no newline, tab, null, etc).
  */
-int ascii(string char) {
+private int ascii(string char) {
   char =
     rank[result](string c |
       c =
@@ -123,7 +132,7 @@ class RegExpRoot extends RegExpTerm {
 /**
  * A constant in a regular expression that represents valid Unicode character(s).
  */
-class RegexpCharacterConstant extends RegExpConstant {
+private class RegexpCharacterConstant extends RegExpConstant {
   RegexpCharacterConstant() { this.isCharacter() }
 }
 
@@ -157,7 +166,7 @@ private predicate isCannonicalTerm(RegExpTerm term, string str) {
 /**
  * An abstract input symbol, representing a set of concrete characters.
  */
-newtype TInputSymbol =
+private newtype TInputSymbol =
   /** An input symbol corresponding to character `c`. */
   Char(string c) {
     c = any(RegexpCharacterConstant cc | getRoot(cc).isRelevant()).getValue().charAt(_)
@@ -227,7 +236,7 @@ class InputSymbol extends TInputSymbol {
 /**
  * An abstract input symbol that represents a character class.
  */
-abstract class CharacterClass extends InputSymbol {
+abstract private class CharacterClass extends InputSymbol {
   /**
    * Gets a character that is relevant for intersection-tests involving this
    * character class.
@@ -476,7 +485,7 @@ module CharacterClasses {
   }
 }
 
-class EdgeLabel extends TInputSymbol {
+private class EdgeLabel extends TInputSymbol {
   string toString() {
     this = Epsilon() and result = ""
     or
@@ -488,12 +497,12 @@ class EdgeLabel extends TInputSymbol {
  * Gets the state before matching `t`.
  */
 pragma[inline]
-State before(RegExpTerm t) { result = Match(t, 0) }
+private State before(RegExpTerm t) { result = Match(t, 0) }
 
 /**
  * Gets a state the NFA may be in after matching `t`.
  */
-State after(RegExpTerm t) {
+private State after(RegExpTerm t) {
   exists(RegExpAlt alt | t = alt.getAChild() | result = after(alt))
   or
   exists(RegExpSequence seq, int i | t = seq.getChild(i) |
@@ -731,7 +740,7 @@ InputSymbol getAnInputSymbolMatching(string char) {
 /**
  * Predicates for constructing a prefix string that leads to a given state.
  */
-module PrefixConstruction {
+private module PrefixConstruction {
   /**
    * Holds if `state` starts the string matched by the regular expression.
    */
@@ -836,7 +845,7 @@ module PrefixConstruction {
  * For the regular expression `/((ab)+)*abab/` the accepting state is not reachable from the fork
  * using epsilon transitions. But any attempt at repeating `w` will end in a state that accepts all suffixes.
  */
-module SuffixConstruction {
+private module SuffixConstruction {
   import PrefixConstruction
 
   /**
@@ -938,7 +947,7 @@ module SuffixConstruction {
  * backslashes in `s`.
  */
 bindingset[s]
-string escape(string s) {
+private string escape(string s) {
   result =
     s.replaceAll("\\", "\\\\")
         .replaceAll("\n", "\\n")
@@ -953,7 +962,7 @@ string escape(string s) {
  * a RegExpTerm, so it doesn't start in the middle of a constant.
  */
 bindingset[str, i]
-string rotate(string str, int i) {
+private string rotate(string str, int i) {
   result = str.suffix(str.length() - i) + str.prefix(str.length() - i)
 }
 
@@ -961,7 +970,7 @@ string rotate(string str, int i) {
  * Holds if `term` may cause superliniear backtracking on strings containing many repetitions of `pump`.
  * Gets the minimum possible string that causes superliniear backtracking.
  */
-predicate isReDoSAttackable(RegExpTerm term, string pump, State s) {
+private predicate isReDoSAttackable(RegExpTerm term, string pump, State s) {
   exists(int i, string c | s = Match(term, i) |
     c =
       min(string w |
@@ -974,8 +983,12 @@ predicate isReDoSAttackable(RegExpTerm term, string pump, State s) {
   )
 }
 
+/**
+ * Holds if the state `s` (represented by the term `t`) can have backtracking with repetitions of `pump`.
+ *
+ * `prefixMsg` contains a friendly message for a prefix that reaches `s` (or `prefixMsg` is the empty string if the prefix is empty or if no prefix could be found).
+ */
 predicate hasReDoSResult(RegExpTerm t, string pump, State s, string prefixMsg) {
-  // TODO:
   isReDoSAttackable(t, pump, s) and
   (
     prefixMsg = "starting with '" + escape(PrefixConstruction::prefix(s)) + "' and " and
