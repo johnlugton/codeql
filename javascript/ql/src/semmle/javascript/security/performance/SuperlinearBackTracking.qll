@@ -88,9 +88,9 @@ private State getRootState() { result = Match(any(RegExpRoot r), 0) }
 newtype TStateTuple =
   MkStateTuple(State q1, State q2, State q3) {
     // starts at (prev, prev, next)
-    isFork(q1, q3, _, _, _, _, _, _) and q1 = q2
+    isStartPair(q1, q3) and q1 = q2
     or
-    step(_, _, _, _, q1, q2, q3)
+    step(_, _, _, _, q1, q2, q3) and FeasibleTuple::isFeasibleTuple(q1, q2, q3)
   }
 
 class StateTuple extends TStateTuple {
@@ -102,11 +102,62 @@ class StateTuple extends TStateTuple {
 
   string toString() { result = "(" + q1 + ", " + q2 + ", " + q3 + ")" }
 
-  State getFirst() { result = q1 }
+  pragma[noinline]
+  predicate isTuple(State r1, State r2, State r3) { r1 = q1 and r2 = q2 and r3 = q3 }
+}
 
-  State getSecond() { result = q2 }
+/**
+ * A module for determining feasible tuples for the product automaton.
+ *
+ * The implementation is split into many predicates for performance reasons.
+ */
+private module FeasibleTuple {
+  /**
+   * Holds if the tuple `(r1, r2, r3)` might be on path from a start-state to an end-state in the product automaton.
+   */
+  predicate isFeasibleTuple(State r1, State r2, State r3) {
+    // The first element is either inside a repetition (or the start state itself)
+    isRepeitionOrStart(r1) and
+    // The last element is inside a repetition
+    stateInsideRepetition(r3) and
+    // The states are reachable in the NFA in the order r1 -> r2 -> r3
+    delta+(r1) = r2 and
+    delta+(r2) = r3 and
+    // The last element can reach a target (the "next" state in a `(prev, next)` pair).
+    canReachATarget(r3) and
+    // The first element can reach a beginning (the "prev" state in a `(prev, next)` pair).
+    canReachABeginning(r1)
+  }
 
-  State getThird() { result = q3 }
+  /**
+   * Holds if `s` is either inside a repetition, or is the start state.
+   */
+  pragma[noinline]
+  private predicate isRepeitionOrStart(State s) { stateInsideRepetition(s) or s = getRootState() }
+
+  /**
+   * Holds if state `s` might be inside a backtracking repetition.
+   */
+  pragma[noinline]
+  private predicate stateInsideRepetition(State s) {
+    s.getRepr().getParent*() instanceof InfiniteRepetitionQuantifier
+  }
+
+  /**
+   * Holds if there exists a path in the NFA from `s` to a "prev" state
+   * (from a `(prev, next)` pair that starts the search).
+   */
+  pragma[noinline]
+  private predicate canReachABeginning(State s) {
+    delta+(s) = any(State prev | isStartPair(prev, _))
+  }
+
+  /**
+   * Holds if there exists a path in the NFA from `s` to a "next" state
+   * (from a `(prev, next)` pair that starts the search).
+   */
+  pragma[noinline]
+  private predicate canReachATarget(State s) { delta+(s) = any(State next | isStartPair(_, next)) }
 }
 
 /**
@@ -132,31 +183,6 @@ predicate isStartPair(State prev, State next) {
 State delta(State s) { delta(s, _, result) }
 
 /**
- * TODO: Doc.
- */
-pragma[noopt]
-predicate isFork(
-  State prev, State next, InputSymbol s1, InputSymbol s2, InputSymbol s3, State r1, State r2,
-  State r3
-) {
-  isStartPair(prev, next) and
-  exists(State q1, State q3 |
-    q1 = epsilonSucc*(prev) and
-    delta(q1, s1, r1) and
-    deltaClosed(prev, s2, r2) and
-    q3 = epsilonSucc*(next) and
-    delta(q3, s3, r3) and
-    exists(getAThreewayIntersect(s1, s2, s3))
-  |
-    s1 != s3
-    or
-    r1 != r3
-    or
-    r1 = r3 and q1 != q3
-  )
-}
-
-/**
  * Holds if there are transitions from the components of `q` to the corresponding
  * components of `r` labelled with `s1` and `s2`, respectively.
  */
@@ -178,79 +204,12 @@ pragma[noopt]
 predicate step(
   StateTuple q, InputSymbol s1, InputSymbol s2, InputSymbol s3, State r1, State r2, State r3
 ) {
-  exists(State q1, State q2, State q3 |
-    q.getFirst() = q1 and q.getSecond() = q2 and q.getThird() = q3
-  |
+  exists(State q1, State q2, State q3 | q.isTuple(q1, q2, q3) |
     deltaClosed(q1, s1, r1) and
     deltaClosed(q2, s2, r2) and
     deltaClosed(q3, s3, r3) and
     // use noopt to force the join on `intersect` to happen last.
     exists(getAThreewayIntersect(s1, s2, s3))
-  ) and
-  // Lots of pruning, to only consider relevant states.
-  isRepeitionOrRoot(r1) and // TODO: Try to move this into step?
-  stateInsideRepetition(r3) and
-  delta+(r1) = r2 and
-  delta+(r2) = r3 and
-  canReachATarget(r3) and
-  canReachABeginning(r1)
-  //stateInsideBacktracking(r1) and // TODO:
-  //stateInsideBacktracking(r2)
-}
-
-pragma[noinline]
-predicate canReachABeginning(State s) { delta+(s) = getABeginning() }
-
-pragma[noinline]
-predicate canReachATarget(State s) { delta+(s) = getATarget() }
-
-State getATarget() { isStartPair(_, result) }
-
-State getABeginning() { isStartPair(result, _) }
-
-/**
- * Holds if state `s` might be inside a backtracking repetition.
- */
-pragma[noinline]
-predicate stateInsideRepetition(State s) {
-  s.getRepr().getParent*() instanceof InfiniteRepetitionQuantifier
-}
-
-predicate isRepeitionOrRoot(State s) { stateInsideRepetition(s) or s = getRootState() }
-
-private newtype TTrace =
-  Nil() or
-  Step(InputSymbol s1, InputSymbol s2, InputSymbol s3, TTrace t) {
-    exists(StateTuple p |
-      isReachableFromFork(_, _, p, t, _) and
-      stepTuples(p, s1, s2, s3, _)
-    )
-    or
-    t = Nil() and isFork(_, _, s1, s2, s3, _, _, _)
-  }
-
-/**
- * A list of pairs of input symbols that describe a path in the product automaton
- * starting from some fork state.
- */
-class Trace extends TTrace {
-  string toString() {
-    this = Nil() and result = "Nil()"
-    or
-    exists(InputSymbol s1, InputSymbol s2, InputSymbol s3, Trace t | this = Step(s1, s2, s3, t) |
-      result = "Step(" + s1 + ", " + s2 + ", " + s3 + ", " + t + ")"
-    )
-  }
-}
-
-/**
- * Gets a string corresponding to the trace `t`.
- */
-string concretise(Trace t) {
-  t = Nil() and result = ""
-  or
-  exists(InputSymbol s1, InputSymbol s2, InputSymbol s3, Trace rest | t = Step(s1, s2, s3, rest) |
-    result = concretise(rest) + getAThreewayIntersect(s1, s2, s3)
   )
 }
 
@@ -261,6 +220,7 @@ InputSymbol getAMatchingInputSymbol(string char) {
 }
 
 // TODO: Rename to threewayIntersect. Document that it is not perfect.
+// TODO: Use `belongsTo`? TO make sure they share a root.
 pragma[noinline]
 string getAThreewayIntersect(InputSymbol s1, InputSymbol s2, InputSymbol s3) {
   result = intersect(s1, s2) and result = intersect(s2, s3)
@@ -288,6 +248,44 @@ predicate isEndState(StateTuple tuple) {
   )
 }
 
+private newtype TTrace =
+  Nil() or
+  Step(InputSymbol s1, InputSymbol s2, InputSymbol s3, TTrace t) {
+    exists(StateTuple p |
+      isReachableFromStartTuple(_, _, p, t, _) and
+      stepTuples(p, s1, s2, s3, _)
+    )
+    or
+    exists(State prev, State next | isStartPair(prev, next) |
+      t = Nil() and stepTuples(MkStateTuple(prev, prev, next), s1, s2, s3, _)
+    )
+  }
+
+/**
+ * A list of pairs of input symbols that describe a path in the product automaton
+ * starting from some fork state.
+ */
+class Trace extends TTrace {
+  string toString() {
+    this = Nil() and result = "Nil()"
+    or
+    exists(InputSymbol s1, InputSymbol s2, InputSymbol s3, Trace t | this = Step(s1, s2, s3, t) |
+      result = "Step(" + s1 + ", " + s2 + ", " + s3 + ", " + t + ")"
+    )
+  }
+}
+
+/**
+ * Gets a string corresponding to the trace `t`.
+ */
+string concretise(Trace t) {
+  t = Nil() and result = ""
+  or
+  exists(InputSymbol s1, InputSymbol s2, InputSymbol s3, Trace rest | t = Step(s1, s2, s3, rest) |
+    result = concretise(rest) + getAThreewayIntersect(s1, s2, s3)
+  )
+}
+
 /**
  * Gets the minimum length of a path from `q` to `r` in the
  * product automaton.
@@ -304,27 +302,29 @@ int distBackFromEnd(StateTuple end, StateTuple r) =
  * Holds if `r` is reachable from `(fork, fork)` under input `w`, and there is
  * a path from `r` back to `(fork, fork)` with `rem` steps. <- TODO: Doc is outdated!
  */
-predicate isReachableFromFork(State prev, State next, StateTuple r, Trace w, int rem) {
-  // base case
+predicate isReachableFromStartTuple(State prev, State next, StateTuple r, Trace w, int rem) {
+  // base case - the first step is inlined.
   exists(InputSymbol s1, InputSymbol s2, InputSymbol s3, State q1, State q2, State q3 |
-    isFork(prev, next, s1, s2, s3, q1, q2, q3) and
+    isStartPair(prev, next) and
+    stepTuples(MkStateTuple(prev, prev, next), s1, s2, s3, r) and
     r = MkStateTuple(q1, q2, q3) and
     w = Step(s1, s2, s3, Nil()) and
     rem = distBackFromEnd(MkStateTuple(prev, next, next), r)
   )
   or
   // recursive case
-  exists(StateTuple p, Trace v, InputSymbol s1, InputSymbol s2, InputSymbol s3, int prevRem |
-    isReachableFromFork(prev, next, p, v, prevRem) and
-    prevRem - 1 = rem and
-    rem = myDistPredicate(prev, next, r, p, s1, s2, s3) and
+  exists(StateTuple p, Trace v, InputSymbol s1, InputSymbol s2, InputSymbol s3 |
+    isReachableFromStartTuple(prev, next, p, v, rem + 1) and
+    rem = isReachableFromStartTupleHelper(prev, next, r, p, s1, s2, s3) and
     w = Step(s1, s2, s3, v)
   )
 }
 
-// Cannot be inlined.
+/**
+ * Helper predicate for the recursive case in `isReachableFromStartTuple`.
+ */
 pragma[noinline]
-int myDistPredicate(
+private int isReachableFromStartTupleHelper(
   State prev, State next, StateTuple r, StateTuple p, InputSymbol s1, InputSymbol s2, InputSymbol s3
 ) {
   result = distBackFromEnd(MkStateTuple(prev, next, next), r) and
@@ -332,19 +332,20 @@ int myDistPredicate(
 }
 
 /**
- * Gets a state in the product automaton from which `(prev, next, next)` is
- * reachable in zero or more epsilon transitions.
+ * Gets the `(prev, next, next)` from the product automaton.
  */
-StateTuple getAForkPair(State prev, State next) {
-  // TODO: Name - end-tuple.
+StateTuple getAnEndTuple(State prev, State next) {
   isStartPair(prev, next) and
-  result = MkStateTuple(epsilonPred*(prev), epsilonPred*(next), epsilonPred*(next))
+  result = MkStateTuple(prev, next, next)
 }
 
+/**
+ * TODO: Doc.
+ */
 predicate isPumpable(State prev, State next, string w) {
   exists(StateTuple q, Trace t |
-    isReachableFromFork(prev, next, q, t, _) and
-    q = getAForkPair(prev, next) and
+    isReachableFromStartTuple(prev, next, q, t, _) and
+    q = getAnEndTuple(prev, next) and
     w = concretise(t)
   )
 }
@@ -355,6 +356,9 @@ predicate isPumpable(State prev, State next, string w) {
  */
 predicate superLiniearReDoSCandidate(State s, string pump) { isPumpable(_, s, pump) }
 
+/**
+ * TODO:
+ */
 predicate polynimalReDoS(RegExpTerm t, string pump, State s, string prefixMsg, string msg) {
   hasReDoSResult(t, pump, s, prefixMsg) and
   exists(State prev |
@@ -410,7 +414,9 @@ class PolynomialBackTrackingTerm extends InfiniteRepetitionQuantifier {
    * Holds if all non-empty successors to the polynomial backtracking term matches the end of the line.
    */
   predicate isAtEndLine() {
-    forall(RegExpTerm succ | this.getSuccessor+() = succ and not matchesEpsilon(succ) |
+    forall(RegExpTerm succ |
+      this.getSuccessor+() = succ and not matchesEpsilon(succ) // TODO: Try NFA based.
+    |
       succ instanceof RegExpDollar
     )
   }
